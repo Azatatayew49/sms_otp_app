@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const _kPrefUrl = 'gateway_url';
 const _kPrefToken = 'gateway_token';
+const _kPrefName = 'gateway_device_name';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,6 +15,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlCtrl = TextEditingController();
   final _tokenCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -25,12 +27,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     _urlCtrl.text = prefs.getString(_kPrefUrl) ?? 'http://45.39.230.200';
     _tokenCtrl.text = prefs.getString(_kPrefToken) ?? '';
+    _nameCtrl.text = prefs.getString(_kPrefName) ?? '';
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kPrefUrl, _urlCtrl.text.trim());
     await prefs.setString(_kPrefToken, _tokenCtrl.text.trim());
+    await prefs.setString(_kPrefName, _nameCtrl.text.trim());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Settings saved.')),
@@ -42,6 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _urlCtrl.dispose();
     _tokenCtrl.dispose();
+    _nameCtrl.dispose();
     super.dispose();
   }
 
@@ -58,6 +63,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const Text(
+              'Phone name',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                hintText: "e.g. Azat's phone",
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Must be unique. Admins see this name in the staff app.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 20),
             const Text(
               'Backend URL',
               style: TextStyle(fontWeight: FontWeight.bold),
