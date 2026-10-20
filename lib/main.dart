@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'core/brand.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/gateway_service.dart';
@@ -17,10 +18,7 @@ class SmsOtpApp extends StatelessWidget {
     return MaterialApp(
       title: 'SMS OTP Gateway',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1565C0)),
-        useMaterial3: true,
-      ),
+      theme: buildBrandTheme(),
       initialRoute: '/',
       routes: {
         '/': (_) => const HomeScreen(),
