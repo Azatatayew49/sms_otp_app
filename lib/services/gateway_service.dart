@@ -11,6 +11,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 const _kPrefUrl = 'gateway_url';
 const _kPrefToken = 'gateway_token';
+// A fresh install talks to the production server without any setup.
+const kDefaultUrl = 'http://45.39.230.200';
 const _kPrefDeviceId = 'gateway_device_id';
 const kPrefDeviceName = 'gateway_device_name';
 const _notifChannelId = 'sms_gateway_service';
@@ -110,7 +112,9 @@ Future<void> onServiceStart(ServiceInstance service) async {
     final gen = ++generation;
     reconnectTimer?.cancel();
     heartbeatTimer?.cancel();
-    final url = prefs.getString(_kPrefUrl) ?? '';
+    final url = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
+    // Only phones set up with the old shared token still send it; everyone else
+    // is approved by an admin in the staff app.
     final token = prefs.getString(_kPrefToken) ?? '';
     final name = (prefs.getString(kPrefDeviceName) ?? '').trim();
     var deviceId = prefs.getString(_kPrefDeviceId) ?? '';
@@ -119,8 +123,8 @@ Future<void> onServiceStart(ServiceInstance service) async {
       deviceId = List.generate(16, (_) => r.nextInt(16).toRadixString(16)).join();
       await prefs.setString(_kPrefDeviceId, deviceId);
     }
-    if (url.isEmpty || token.isEmpty || name.isEmpty) {
-      await updateNotif('Not configured. Open app settings (name, URL, token).');
+    if (url.isEmpty || name.isEmpty) {
+      await updateNotif('Not set up. Open settings and give this phone a name.');
       return;
     }
 
@@ -130,7 +134,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
       final uri = base.replace(
         path: '/ws/sms-gateway/',
         queryParameters: {
-          'gw_token': token,
+          if (token.isNotEmpty) 'gw_token': token,
           'device_id': deviceId,
           'name': name,
         },
@@ -146,7 +150,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
         'can_send': capable,
         'version': '2.0.0',
       }));
-      await updateNotif('Connected as "$name" ✓');
+      await updateNotif('Connecting as "$name"…');
 
       // Heartbeat: lets the server know we are alive and detects dead sockets.
       heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
@@ -172,6 +176,12 @@ Future<void> onServiceStart(ServiceInstance service) async {
                   data['phone'] as String,
                   data['message'] as String,
                 );
+              case 'registered':
+                await updateNotif(data['approved'] == true
+                    ? 'Connected as "$name" ✓'
+                    : 'Waiting for an admin to approve "$name"…');
+              case 'approved':
+                await updateNotif('Approved ✓ Connected as "$name"');
               case 'error':
                 await updateNotif(data['message'] as String? ?? 'Server error');
             }
@@ -188,7 +198,12 @@ Future<void> onServiceStart(ServiceInstance service) async {
           }
           if (code == 4003) {
             running = false;
-            await updateNotif('Rejected: wrong token. Check settings.');
+            await updateNotif('Rejected by the server. Check the phone name and server.');
+            return;
+          }
+          if (code == 4010) {
+            running = false;
+            await updateNotif('Too many phones are waiting for approval. Ask an admin.');
             return;
           }
           await updateNotif('Disconnected. Reconnecting…');

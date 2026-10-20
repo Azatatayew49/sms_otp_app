@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 import '../services/gateway_service.dart';
 
@@ -20,6 +21,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkPermissions();
     _listenService();
     _syncRunning();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askNameOnFirstRun());
+  }
+
+  /// A fresh install only needs a phone name; take the user straight to it.
+  Future<void> _askNameOnFirstRun() async {
+    final prefs = await SharedPreferences.getInstance();
+    if ((prefs.getString(kPrefDeviceName) ?? '').trim().isNotEmpty) return;
+    if (!mounted) return;
+    await Navigator.of(context).pushNamed('/settings');
+    if (_running) GatewayService.start();
   }
 
   Future<void> _checkPermissions() async {

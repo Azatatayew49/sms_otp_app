@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/gateway_service.dart' show kDefaultUrl;
 import '../widgets/update_tile.dart';
 
 const _kPrefUrl = 'gateway_url';
-const _kPrefToken = 'gateway_token';
 const _kPrefName = 'gateway_device_name';
 
 class SettingsScreen extends StatefulWidget {
@@ -15,7 +15,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlCtrl = TextEditingController();
-  final _tokenCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
 
   @override
@@ -26,15 +25,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    _urlCtrl.text = prefs.getString(_kPrefUrl) ?? 'http://45.39.230.200';
-    _tokenCtrl.text = prefs.getString(_kPrefToken) ?? '';
+    _urlCtrl.text = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
     _nameCtrl.text = prefs.getString(_kPrefName) ?? '';
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kPrefUrl, _urlCtrl.text.trim());
-    await prefs.setString(_kPrefToken, _tokenCtrl.text.trim());
     await prefs.setString(_kPrefName, _nameCtrl.text.trim());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -46,7 +43,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _urlCtrl.dispose();
-    _tokenCtrl.dispose();
     _nameCtrl.dispose();
     super.dispose();
   }
@@ -112,24 +108,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Gateway Token',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: _tokenCtrl,
-                decoration: const InputDecoration(
-                  hintText: 'secret token from backend .env',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                obscureText: true,
-              ),
               const SizedBox(height: 8),
               Text(
-                'Must match SMS_GATEWAY_TOKEN in the backend .env file.',
+                'New phones wait for an admin to approve them in the staff app.',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
               const SizedBox(height: 28),
