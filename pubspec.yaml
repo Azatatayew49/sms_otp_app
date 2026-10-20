@@ -1,7 +1,7 @@
 name: sms_otp_app
 description: SMS OTP Gateway – receives OTP requests from backend and sends SMS.
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.0.3+4
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   web_socket_channel: ^3.0.1
-  telephony: ^0.2.0
+  another_telephony: ^0.4.1
   shared_preferences: ^2.3.2
   flutter_background_service: ^5.0.5
   flutter_local_notifications: ^17.2.4

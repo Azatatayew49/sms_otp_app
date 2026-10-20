@@ -6,7 +6,7 @@ import 'dart:ui';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:telephony/telephony.dart';
+import 'package:another_telephony/telephony.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 const _kPrefUrl = 'gateway_url';
@@ -80,9 +80,13 @@ Future<void> onServiceStart(ServiceInstance service) async {
     }
 
     try {
-      telephony.sendSms(
+      // Awaited so platform errors (missing permission, receiver registration)
+      // land in the catch below instead of vanishing with no ack or log.
+      await telephony.sendSms(
         to: phone,
         message: message,
+        // 70 chars is the single-SMS limit once the text needs Unicode.
+        isMultipart: message.length > 70,
         statusListener: (SendStatus status) async {
           if (status == SendStatus.SENT) {
             // Handed to the carrier: that is success for monitoring purposes.
@@ -93,7 +97,10 @@ Future<void> onServiceStart(ServiceInstance service) async {
             sendAck(smsId, 'delivered');
           }
         },
-      );
+      // Without SMS permission the plugin can't ask for it from this background
+      // isolate and never answers; report that instead of waiting forever.
+      ).timeout(const Duration(seconds: 30),
+          onTimeout: () => throw 'No answer from Android. Is SMS permission granted?');
     } catch (e) {
       sendAck(smsId, 'failed', e.toString());
       logLocal(false, e.toString());
