@@ -5,6 +5,8 @@
     <!-- SMS sending -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Balance check: runs a USSD code (*0800#) without opening the dialer -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />

@@ -16,6 +16,7 @@ import io.flutter.plugin.common.*
 class TelephonyPlugin : FlutterPlugin, ActivityAware {
 
   private lateinit var smsChannel: MethodChannel
+  private lateinit var ussdChannel: MethodChannel
 
   private lateinit var smsMethodCallHandler: SmsMethodCallHandler
 
@@ -63,11 +64,15 @@ class TelephonyPlugin : FlutterPlugin, ActivityAware {
     smsChannel = MethodChannel(messenger, CHANNEL_SMS)
     smsChannel.setMethodCallHandler(smsMethodCallHandler)
     smsMethodCallHandler.setForegroundChannel(smsChannel)
+
+    ussdChannel = MethodChannel(messenger, "akulag/ussd")
+    ussdChannel.setMethodCallHandler(UssdHandler(context))
   }
 
   private fun tearDownPlugin() {
     IncomingSmsReceiver.foregroundSmsChannel = null
     smsChannel.setMethodCallHandler(null)
+    if (this::ussdChannel.isInitialized) ussdChannel.setMethodCallHandler(null)
   }
 
 }

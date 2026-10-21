@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:battery_plus/battery_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,6 +17,11 @@ const _kPrefToken = 'gateway_token';
 const kDefaultUrl = 'http://45.39.230.200';
 const _kPrefDeviceId = 'gateway_device_id';
 const kPrefDeviceName = 'gateway_device_name';
+const _kPrefBalanceAt = 'gateway_balance_checked_at';
+// TMCell balance check; the reply text goes to the server, which reads the amount.
+const kBalanceUssd = '*0800#';
+const _balanceEvery = Duration(hours: 1);
+const _ussd = MethodChannel('akulag/ussd');
 const _notifChannelId = 'sms_gateway_service';
 const _notifId = 1;
 
@@ -37,6 +44,9 @@ Future<void> onServiceStart(ServiceInstance service) async {
   WebSocketChannel? channel;
   Timer? reconnectTimer;
   Timer? heartbeatTimer;
+  Timer? balanceTimer;
+  final battery = Battery();
+  bool checkingBalance = false;
   bool running = true;
   // Bumped on every (re)connect so callbacks of an old socket are ignored.
   int generation = 0;
@@ -108,9 +118,51 @@ Future<void> onServiceStart(ServiceInstance service) async {
     }
   }
 
+  /// Battery level and charging state for the server (null fields if unknown).
+  Future<Map<String, dynamic>> batteryInfo() async {
+    try {
+      final level = await battery.batteryLevel;
+      final state = await battery.batteryState;
+      return {
+        'battery': level,
+        'charging': state == BatteryState.charging || state == BatteryState.full,
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// Dials the balance USSD at most once per [_balanceEvery] (remembered across
+  /// restarts) and reports the reply, or why it failed.
+  Future<void> checkBalanceIfDue() async {
+    if (checkingBalance || channel == null) return;
+    final last = DateTime.tryParse(prefs.getString(_kPrefBalanceAt) ?? '');
+    if (last != null && DateTime.now().difference(last) < _balanceEvery) return;
+    checkingBalance = true;
+    await prefs.setString(_kPrefBalanceAt, DateTime.now().toIso8601String());
+    Map<String, dynamic> report;
+    try {
+      final reply = await _ussd
+          .invokeMethod<String>('sendUssd', {'code': kBalanceUssd})
+          .timeout(const Duration(seconds: 60));
+      report = {'type': 'balance', 'code': kBalanceUssd, 'text': reply ?? ''};
+    } on PlatformException catch (e) {
+      report = {'type': 'balance', 'code': kBalanceUssd, 'error': e.message ?? e.code};
+    } on TimeoutException {
+      report = {'type': 'balance', 'code': kBalanceUssd, 'error': 'No reply from the network'};
+    } catch (e) {
+      report = {'type': 'balance', 'code': kBalanceUssd, 'error': e.toString()};
+    }
+    checkingBalance = false;
+    try {
+      channel?.sink.add(jsonEncode(report));
+    } catch (_) {}
+  }
+
   void scheduleReconnect(int gen) {
     if (!running || gen != generation) return;
     heartbeatTimer?.cancel();
+    balanceTimer?.cancel();
     reconnectTimer?.cancel();
     reconnectTimer = Timer(const Duration(seconds: 5), () => connectRef?.call());
   }
@@ -119,6 +171,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
     final gen = ++generation;
     reconnectTimer?.cancel();
     heartbeatTimer?.cancel();
+    balanceTimer?.cancel();
     final url = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
     // Only phones set up with the old shared token still send it; everyone else
     // is approved by an admin in the staff app.
@@ -153,6 +206,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
       lastPong = DateTime.now();
       final capable = await Telephony.instance.isSmsCapable ?? true;
       ch.sink.add(jsonEncode({
+        ...await batteryInfo(),
         'type': 'hello',
         'can_send': capable,
         'version': '2.0.0',
@@ -160,14 +214,23 @@ Future<void> onServiceStart(ServiceInstance service) async {
       await updateNotif('Connecting as "$name"…');
 
       // Heartbeat: lets the server know we are alive and detects dead sockets.
-      heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      // Balance: shortly after connecting if due, then re-checked every few minutes.
+      balanceTimer?.cancel();
+      balanceTimer = Timer(const Duration(seconds: 30), () {
+        if (gen == generation) checkBalanceIfDue();
+        balanceTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+          if (gen == generation) checkBalanceIfDue();
+        });
+      });
+
+      heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
         if (gen != generation) return;
         if (DateTime.now().difference(lastPong) > const Duration(seconds: 50)) {
           ch.sink.close();
           return;
         }
         try {
-          ch.sink.add(jsonEncode({'type': 'ping'}));
+          ch.sink.add(jsonEncode({'type': 'ping', ...await batteryInfo()}));
         } catch (_) {}
       });
 
@@ -237,6 +300,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
     generation++;
     reconnectTimer?.cancel();
     heartbeatTimer?.cancel();
+    balanceTimer?.cancel();
     channel?.sink.close();
     service.stopSelf();
   });
@@ -246,6 +310,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
     generation++;
     reconnectTimer?.cancel();
     heartbeatTimer?.cancel();
+    balanceTimer?.cancel();
     channel?.sink.close();
     await connect();
   });
