@@ -133,11 +133,12 @@ Future<void> onServiceStart(ServiceInstance service) async {
   }
 
   /// Dials the balance USSD at most once per [_balanceEvery] (remembered across
-  /// restarts) and reports the reply, or why it failed.
-  Future<void> checkBalanceIfDue() async {
+  /// restarts) and reports the reply, or why it failed. [force]: an admin asked
+  /// for a check now.
+  Future<void> checkBalanceIfDue({bool force = false}) async {
     if (checkingBalance || channel == null) return;
     final last = DateTime.tryParse(prefs.getString(_kPrefBalanceAt) ?? '');
-    if (last != null && DateTime.now().difference(last) < _balanceEvery) return;
+    if (!force && last != null && DateTime.now().difference(last) < _balanceEvery) return;
     checkingBalance = true;
     await prefs.setString(_kPrefBalanceAt, DateTime.now().toIso8601String());
     Map<String, dynamic> report;
@@ -250,6 +251,8 @@ Future<void> onServiceStart(ServiceInstance service) async {
                 await updateNotif(data['approved'] == true
                     ? 'Connected as "$name" ✓'
                     : 'Waiting for an admin to approve "$name"…');
+              case 'check_balance':
+                checkBalanceIfDue(force: true);
               case 'approved':
                 await updateNotif('Approved ✓ Connected as "$name"');
               case 'error':
