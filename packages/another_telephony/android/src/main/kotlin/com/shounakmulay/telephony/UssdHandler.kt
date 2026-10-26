@@ -14,17 +14,46 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Ak Ulag addition: runs a USSD code (e.g. a balance check) without the dialer
- * and returns the network's text reply. Uses the SIM that sends SMS.
+ * Ak Ulag addition:
+ *  - sendUssd: runs a USSD code (e.g. a balance check) without the dialer and returns
+ *    the network's text reply, on the SIM given as sub_id (else the SMS SIM).
+ *  - listSims: the active SIMs as [{id, slot, name, carrier}] (needs READ_PHONE_STATE).
  * Registered on every engine, so it also works from a background service isolate.
  */
 class UssdHandler(private val context: Context) : MethodChannel.MethodCallHandler {
 
   override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-    if (call.method != "sendUssd") {
-      result.notImplemented()
+    when (call.method) {
+      "sendUssd" -> sendUssd(call, result)
+      "listSims" -> listSims(result)
+      else -> result.notImplemented()
+    }
+  }
+
+  private fun listSims(result: MethodChannel.Result) {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
+      != PackageManager.PERMISSION_GRANTED
+    ) {
+      result.error("PERMISSION", "Phone permission is not granted", null)
       return
     }
+    try {
+      val manager = context.getSystemService(SubscriptionManager::class.java)
+      val sims = manager?.activeSubscriptionInfoList.orEmpty().map {
+        mapOf(
+          "id" to it.subscriptionId,
+          "slot" to it.simSlotIndex,
+          "name" to (it.displayName?.toString() ?: ""),
+          "carrier" to (it.carrierName?.toString() ?: ""),
+        )
+      }
+      result.success(sims)
+    } catch (e: SecurityException) {
+      result.error("PERMISSION", e.message ?: "Not allowed to read SIMs", null)
+    }
+  }
+
+  private fun sendUssd(call: MethodCall, result: MethodChannel.Result) {
     val code = call.argument<String>("code")
     if (code.isNullOrBlank()) {
       result.error("ILLEGAL_ARGUMENT", "USSD code is missing", null)
@@ -46,7 +75,8 @@ class UssdHandler(private val context: Context) : MethodChannel.MethodCallHandle
         result.error("UNAVAILABLE", "No telephony service", null)
         return
       }
-      val subId = SmsManager.getDefaultSmsSubscriptionId()
+      val chosen = call.argument<Int>("sub_id") ?: -1
+      val subId = if (chosen >= 0) chosen else SmsManager.getDefaultSmsSubscriptionId()
       if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
         telephony = telephony.createForSubscriptionId(subId)
       }

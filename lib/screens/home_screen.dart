@@ -20,6 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _login = '';
   bool _enabled = false;
   bool _online = false;
+  String _sim = '';
   final List<Map<String, dynamic>> _log = [];
 
   @override
@@ -39,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _name = prefs.getString(kPrefDeviceName) ?? '';
       _login = prefs.getString(kPrefLogin) ?? '';
       _enabled = prefs.getBool(kPrefEnabled) ?? false;
+      _sim = prefs.getString(kPrefSimLabel) ?? '';
     });
   }
 
@@ -74,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _name = data['name'] as String? ?? _name;
         _enabled = data['enabled'] == true;
         _online = data['online'] == true;
+        _sim = data['sim'] as String? ?? _sim;
       });
     });
 
@@ -137,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _SwitchCard(name: _name, login: _login, enabled: _enabled, online: _running && _online),
+            _SwitchCard(name: _name, login: _login, enabled: _enabled, online: _running && _online, sim: _sim),
             const SizedBox(height: 12),
             // Status card
             Card(
@@ -245,7 +248,9 @@ class _SwitchCard extends StatelessWidget {
   final String login;
   final bool enabled;
   final bool online;
-  const _SwitchCard({required this.name, required this.login, required this.enabled, required this.online});
+  final String sim;
+  const _SwitchCard(
+      {required this.name, required this.login, required this.enabled, required this.online, required this.sim});
 
   @override
   Widget build(BuildContext context) {
@@ -279,6 +284,15 @@ class _SwitchCard extends StatelessWidget {
                     : 'Turned off by an admin: no login codes are sent from this phone until an admin turns it on.',
             style: TextStyle(color: enabled ? Brand.success : Brand.textSecondary),
           ),
+          if (sim.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(children: [
+              const Icon(Icons.sim_card_outlined, size: 16, color: Brand.textTertiary),
+              const SizedBox(width: 4),
+              Text('Sends from: $sim (chosen by an admin)',
+                  style: const TextStyle(fontSize: 12, color: Brand.textSecondary)),
+            ]),
+          ],
           const SizedBox(height: 4),
           Text(
             '${login.isEmpty ? '' : 'Signed in as $login · '}${online ? 'connected' : 'not connected'}'

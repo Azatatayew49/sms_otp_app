@@ -23,6 +23,10 @@ const kPrefLogin = 'gateway_login';
 // Set by the admin in the staff app; the server tells the phone.
 const kPrefDeviceName = 'gateway_device_name';
 const kPrefEnabled = 'gateway_enabled';
+// The SIM an admin chose for SMS and the balance check (-1: the phone's SMS SIM),
+// and how to describe it ("SIM 2 · TMCELL").
+const kPrefSimId = 'gateway_sim_id';
+const kPrefSimLabel = 'gateway_sim_label';
 const _kPrefBalanceAt = 'gateway_balance_checked_at';
 // TMCell balance check; the reply text goes to the server, which reads the amount.
 const kBalanceUssd = '*0800#';
@@ -80,7 +84,12 @@ Future<void> onServiceStart(ServiceInstance service) async {
   }
 
   Future<void> publishState({required bool online}) async {
-    service.invoke('state', {'name': name(), 'enabled': enabled(), 'online': online});
+    service.invoke('state', {
+      'name': name(),
+      'enabled': enabled(),
+      'online': online,
+      'sim': prefs.getString(kPrefSimLabel) ?? '',
+    });
     await updateNotif(online ? switchText() : 'Not connected');
   }
 
@@ -109,9 +118,42 @@ Future<void> onServiceStart(ServiceInstance service) async {
     } catch (_) {}
   }
 
-  Future<void> sendSms(int? smsId, String phone, String message) async {
+  int simId() => prefs.getInt(kPrefSimId) ?? -1;
+
+  /// The phone's active SIMs, as the server and admins see them.
+  Future<List<Map<String, dynamic>>> listSims() async {
+    try {
+      final raw = await _ussd.invokeMethod<List<dynamic>>('listSims');
+      return [for (final s in raw ?? const []) Map<String, dynamic>.from(s as Map)];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Remembers the admin's SIM choice and a label for it.
+  Future<void> saveSim(dynamic id) async {
+    final sim = id is int ? id : -1;
+    await prefs.setInt(kPrefSimId, sim);
+    var label = 'Phone default SIM';
+    if (sim >= 0) {
+      final match = (await listSims()).where((s) => s['id'] == sim);
+      label = match.isEmpty
+          ? 'Chosen SIM (not found)'
+          : 'SIM ${(match.first['slot'] as int? ?? 0) + 1} · ${match.first['carrier'] ?? match.first['name'] ?? ''}';
+    }
+    await prefs.setString(kPrefSimLabel, label);
+  }
+
+  // The SMS plugin keeps a single status listener, so two SMS sent at once would get
+  // each other's "sent". Send one at a time, each waiting for its "sent".
+  Future<void> sendQueue = Future.value();
+  var sendSeq = 0;
+
+  Future<void> sendOne(int? smsId, String phone, String message, int? sim) async {
     final telephony = Telephony.instance;
     final time = DateTime.now().toIso8601String();
+    final seq = ++sendSeq;
+    final handed = Completer<void>();
 
     void logLocal(bool ok, [String? error]) {
       service.invoke('sms_sent', {
@@ -127,17 +169,21 @@ Future<void> onServiceStart(ServiceInstance service) async {
       // Awaited so platform errors (missing permission, receiver registration)
       // land in the catch below instead of vanishing with no ack or log.
       await telephony.sendSms(
+        subscriptionId: sim ?? simId(),
         to: phone,
         message: message,
         // 70 chars is the single-SMS limit once the text needs Unicode.
         isMultipart: message.length > 70,
         statusListener: (SendStatus status) async {
           if (status == SendStatus.SENT) {
+            if (handed.isCompleted) return;
+            handed.complete();
             // Handed to the carrier: that is success for monitoring purposes.
             sendAck(smsId, 'sent');
             logLocal(true);
             await updateNotif('Last SMS to $phone');
-          } else if (status == SendStatus.DELIVERED) {
+          } else if (status == SendStatus.DELIVERED && seq == sendSeq) {
+            // Only while no later SMS replaced the listener: then it is surely ours.
             sendAck(smsId, 'delivered');
           }
         },
@@ -145,11 +191,20 @@ Future<void> onServiceStart(ServiceInstance service) async {
       // isolate and never answers; report that instead of waiting forever.
       ).timeout(const Duration(seconds: 30),
           onTimeout: () => throw 'No answer from Android. Is SMS permission granted?');
+      // No "sent" in time (no signal, no credit…): move on; the server retries the
+      // code on another phone.
+      await handed.future.timeout(const Duration(seconds: 15), onTimeout: () {
+        logLocal(false, 'Not sent within 15 s');
+      });
     } catch (e) {
       sendAck(smsId, 'failed', e.toString());
       logLocal(false, e.toString());
       await updateNotif('SMS exception: $e');
     }
+  }
+
+  void sendSms(int? smsId, String phone, String message, [int? sim]) {
+    sendQueue = sendQueue.then((_) => sendOne(smsId, phone, message, sim)).catchError((_) {});
   }
 
   /// Battery level and charging state for the server (null fields if unknown).
@@ -178,7 +233,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
     Map<String, dynamic> report;
     try {
       final reply = await _ussd
-          .invokeMethod<String>('sendUssd', {'code': kBalanceUssd})
+          .invokeMethod<String>('sendUssd', {'code': kBalanceUssd, 'sub_id': simId()})
           .timeout(const Duration(seconds: 60));
       report = {'type': 'balance', 'code': kBalanceUssd, 'text': reply ?? ''};
     } on PlatformException catch (e) {
@@ -234,6 +289,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
         'can_send': capable,
         'version': version,
         'model': model,
+        'sims': await listSims(),
       }));
 
       // Heartbeat: lets the server know we are alive and detects dead sockets.
@@ -268,11 +324,18 @@ Future<void> onServiceStart(ServiceInstance service) async {
                   data['sms_id'] as int?,
                   data['phone'] as String,
                   data['message'] as String,
+                  data['sim_id'] as int?,
                 );
               case 'registered':
                 await prefs.setString(kPrefDeviceName, data['name'] as String? ?? name());
                 await prefs.setBool(kPrefEnabled, data['enabled'] == true);
+                await saveSim(data['sim_id']);
                 await publishState(online: true);
+              case 'settings':
+                // An admin chose another SIM: its balance is unknown, check it now.
+                await saveSim(data['sim_id']);
+                await publishState(online: true);
+                checkBalanceIfDue(force: true);
               case 'enabled':
                 await prefs.setBool(kPrefEnabled, data['enabled'] == true);
                 await publishState(online: true);
