@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:another_telephony/telephony.dart';
+import '../core/brand.dart';
 import '../services/gateway_service.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -13,6 +15,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String _status = 'Initializing…';
   bool _running = false;
+  // From the server: the name an admin gave this phone and the admin's on/off switch.
+  String _name = '';
+  String _login = '';
+  bool _enabled = false;
+  bool _online = false;
   final List<Map<String, dynamic>> _log = [];
 
   @override
@@ -21,16 +28,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkPermissions();
     _listenService();
     _syncRunning();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _askNameOnFirstRun());
+    _loadSaved();
   }
 
-  /// A fresh install only needs a phone name; take the user straight to it.
-  Future<void> _askNameOnFirstRun() async {
+  Future<void> _loadSaved() async {
     final prefs = await SharedPreferences.getInstance();
-    if ((prefs.getString(kPrefDeviceName) ?? '').trim().isNotEmpty) return;
+    await prefs.reload();
     if (!mounted) return;
-    await Navigator.of(context).pushNamed('/settings');
-    if (_running) GatewayService.start();
+    setState(() {
+      _name = prefs.getString(kPrefDeviceName) ?? '';
+      _login = prefs.getString(kPrefLogin) ?? '';
+      _enabled = prefs.getBool(kPrefEnabled) ?? false;
+    });
   }
 
   Future<void> _checkPermissions() async {
@@ -59,6 +68,23 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
+    GatewayService.stateStream.listen((data) {
+      if (data == null || !mounted) return;
+      setState(() {
+        _name = data['name'] as String? ?? _name;
+        _enabled = data['enabled'] == true;
+        _online = data['online'] == true;
+      });
+    });
+
+    GatewayService.signedOutStream.listen((data) {
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => LoginScreen(message: data?['message'] as String?)),
+        (_) => false,
+      );
+    });
+
     GatewayService.smsSentStream.listen((data) {
       if (data == null) return;
       if (mounted) {
@@ -75,6 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await GatewayService.stop();
       setState(() {
         _running = false;
+        _online = false;
         _status = 'Stopped.';
       });
     } else {
@@ -100,8 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.settings),
             onPressed: () async {
               await Navigator.of(context).pushNamed('/settings');
-              // Reconnect after settings change
-              if (_running) GatewayService.start();
+              _loadSaved();
             },
           ),
         ],
@@ -111,6 +137,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            _SwitchCard(name: _name, login: _login, enabled: _enabled, online: _running && _online),
+            const SizedBox(height: 12),
             // Status card
             Card(
               color: _running ? Colors.green.shade50 : Colors.grey.shade100,
@@ -205,6 +233,59 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+/// What the admin decided: is this phone turned on to send login codes?
+class _SwitchCard extends StatelessWidget {
+  final String name;
+  final String login;
+  final bool enabled;
+  final bool online;
+  const _SwitchCard({required this.name, required this.login, required this.enabled, required this.online});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = enabled ? Brand.success : Brand.textTertiary;
+    return Card(
+      color: enabled ? Brand.success.withValues(alpha: 0.08) : Colors.grey.shade100,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.smartphone, color: Brand.textTertiary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(name.isEmpty ? 'This phone' : name,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
+              child: Text(enabled ? 'ON' : 'OFF',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            enabled ? 'Turned on by an admin: this phone sends login codes.'
+                    : 'Turned off by an admin: no login codes are sent from this phone until an admin turns it on.',
+            style: TextStyle(color: enabled ? Brand.success : Brand.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${login.isEmpty ? '' : 'Signed in as $login · '}${online ? 'connected' : 'not connected'}'
+            '${enabled || !online ? '' : ' · waiting for an admin'}',
+            style: const TextStyle(fontSize: 12, color: Brand.textTertiary),
+          ),
+        ]),
       ),
     );
   }

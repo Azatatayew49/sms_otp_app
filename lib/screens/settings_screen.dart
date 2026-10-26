@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/gateway_service.dart' show kDefaultUrl;
-import '../widgets/update_tile.dart';
 
-const _kPrefUrl = 'gateway_url';
-const _kPrefName = 'gateway_device_name';
+import '../core/brand.dart';
+import '../services/account.dart';
+import '../services/gateway_service.dart';
+import '../widgets/update_tile.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,8 +14,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _urlCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
+  String _url = kDefaultUrl;
+  String _login = '';
+  String _name = '';
 
   @override
   void initState() {
@@ -25,30 +26,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    _urlCtrl.text = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
-    _nameCtrl.text = prefs.getString(_kPrefName) ?? '';
+    await prefs.reload();
+    if (!mounted) return;
+    setState(() {
+      _url = prefs.getString(kPrefUrl) ?? kDefaultUrl;
+      _login = prefs.getString(kPrefLogin) ?? '';
+      _name = prefs.getString(kPrefDeviceName) ?? '';
+    });
   }
 
-  Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPrefUrl, _urlCtrl.text.trim());
-    await prefs.setString(_kPrefName, _nameCtrl.text.trim());
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Settings saved.')),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _urlCtrl.dispose();
-    _nameCtrl.dispose();
-    super.dispose();
+  Future<void> _signOut() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text('This phone stops sending login codes until someone signs in again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Sign out')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Account.signOut();
+    if (mounted) Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
   }
 
   @override
   Widget build(BuildContext context) {
+    Widget row(IconData icon, String label, String value) => ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(icon, color: Brand.textTertiary),
+          title: Text(label, style: const TextStyle(fontSize: 12, color: Brand.textTertiary)),
+          subtitle: Text(value.isEmpty ? '—' : value,
+              style: const TextStyle(fontSize: 16, color: Brand.text, fontWeight: FontWeight.w600)),
+        );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -56,78 +68,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         foregroundColor: Theme.of(context).colorScheme.onPrimary,
       ),
       body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Phone name',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: _nameCtrl,
-                decoration: const InputDecoration(
-                  hintText: "e.g. Azat's phone",
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Must be unique. Admins see this name in the staff app.',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Backend URL',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: _urlCtrl,
-                decoration: const InputDecoration(
-                  hintText: 'http://45.39.230.200',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                keyboardType: TextInputType.url,
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  ActionChip(
-                    label: const Text('45.39.230.200'),
-                    onPressed: () => _urlCtrl.text = 'http://45.39.230.200',
-                  ),
-                  ActionChip(
-                    label: const Text('localhost:8000'),
-                    onPressed: () => _urlCtrl.text = 'http://localhost:8000',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'New phones wait for an admin to approve them in the staff app.',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 28),
-              ElevatedButton(
-                onPressed: _save,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: const Text('Save & Reconnect'),
-              ),
-              const Divider(height: 40),
-              // The gateway URL is the server root; the release API lives under /api.
-              UpdateTile(
-                  apiBase: () => '${_urlCtrl.text.trim()}/api', app: 'gateway'),
-            ],
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          row(Icons.person_outline, 'Signed in as', _login),
+          row(Icons.smartphone, 'Phone name (set by an admin)', _name),
+          row(Icons.dns_outlined, 'Server', _url),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _signOut,
+            icon: const Icon(Icons.logout),
+            label: const Text('Sign out'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Brand.error,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
           ),
-        ),
+          const Divider(height: 40),
+          // The gateway URL is the server root; the release API lives under /api.
+          UpdateTile(apiBase: () => '$_url/api', app: 'gateway'),
+        ]),
       ),
     );
   }

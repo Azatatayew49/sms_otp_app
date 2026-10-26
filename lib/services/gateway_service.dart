@@ -1,22 +1,28 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'dart:ui';
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:another_telephony/telephony.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-const _kPrefUrl = 'gateway_url';
-const _kPrefToken = 'gateway_token';
+import 'account.dart';
+
+const kPrefUrl = 'gateway_url';
 // A fresh install talks to the production server without any setup.
 const kDefaultUrl = 'http://45.39.230.200';
-const _kPrefDeviceId = 'gateway_device_id';
+const kPrefDeviceId = 'gateway_device_id';
+// From signing in (see account.dart); valid until this phone signs out.
+const kPrefAuthToken = 'gateway_auth_token';
+const kPrefLogin = 'gateway_login';
+// Set by the admin in the staff app; the server tells the phone.
 const kPrefDeviceName = 'gateway_device_name';
+const kPrefEnabled = 'gateway_enabled';
 const _kPrefBalanceAt = 'gateway_balance_checked_at';
 // TMCell balance check; the reply text goes to the server, which reads the amount.
 const kBalanceUssd = '*0800#';
@@ -52,6 +58,16 @@ Future<void> onServiceStart(ServiceInstance service) async {
   int generation = 0;
   Future<void> Function()? connectRef;
   DateTime lastPong = DateTime.now();
+  var version = '';
+  var model = '';
+
+  String name() => prefs.getString(kPrefDeviceName) ?? '';
+  bool enabled() => prefs.getBool(kPrefEnabled) ?? false;
+
+  /// The admin's on/off switch, as the notification and the app show it.
+  String switchText() => enabled()
+      ? 'ON · sending login codes as "${name()}"'
+      : 'OFF · turned off by an admin, no codes are sent';
 
   Future<void> updateNotif(String text) async {
     if (service is AndroidServiceInstance) {
@@ -61,6 +77,24 @@ Future<void> onServiceStart(ServiceInstance service) async {
       );
     }
     service.invoke('status', {'message': text});
+  }
+
+  Future<void> publishState({required bool online}) async {
+    service.invoke('state', {'name': name(), 'enabled': enabled(), 'online': online});
+    await updateNotif(online ? switchText() : 'Not connected');
+  }
+
+  Future<void> signedOut(String message) async {
+    running = false;
+    generation++;
+    heartbeatTimer?.cancel();
+    balanceTimer?.cancel();
+    reconnectTimer?.cancel();
+    await prefs.remove(kPrefAuthToken);
+    await prefs.remove(kPrefEnabled);
+    service.invoke('signed_out', {'message': message});
+    await updateNotif(message);
+    service.stopSelf();
   }
 
   void sendAck(int? smsId, String status, [String? error]) {
@@ -173,19 +207,11 @@ Future<void> onServiceStart(ServiceInstance service) async {
     reconnectTimer?.cancel();
     heartbeatTimer?.cancel();
     balanceTimer?.cancel();
-    final url = prefs.getString(_kPrefUrl) ?? kDefaultUrl;
-    // Only phones set up with the old shared token still send it; everyone else
-    // is approved by an admin in the staff app.
-    final token = prefs.getString(_kPrefToken) ?? '';
-    final name = (prefs.getString(kPrefDeviceName) ?? '').trim();
-    var deviceId = prefs.getString(_kPrefDeviceId) ?? '';
-    if (deviceId.isEmpty) {
-      final r = Random.secure();
-      deviceId = List.generate(16, (_) => r.nextInt(16).toRadixString(16)).join();
-      await prefs.setString(_kPrefDeviceId, deviceId);
-    }
-    if (url.isEmpty || name.isEmpty) {
-      await updateNotif('Not set up. Open settings and give this phone a name.');
+    await prefs.reload(); // signing in happens in the app's own isolate
+    final url = prefs.getString(kPrefUrl) ?? kDefaultUrl;
+    final token = prefs.getString(kPrefAuthToken) ?? '';
+    if (token.isEmpty) {
+      await signedOut('Not signed in. Open the app and sign in.');
       return;
     }
 
@@ -194,11 +220,7 @@ Future<void> onServiceStart(ServiceInstance service) async {
       final base = Uri.parse(url.replaceFirst(RegExp(r'^http'), 'ws'));
       final uri = base.replace(
         path: '/ws/sms-gateway/',
-        queryParameters: {
-          if (token.isNotEmpty) 'gw_token': token,
-          'device_id': deviceId,
-          'name': name,
-        },
+        queryParameters: {'token': token},
       );
       final ch = WebSocketChannel.connect(uri);
       channel = ch;
@@ -210,9 +232,9 @@ Future<void> onServiceStart(ServiceInstance service) async {
         ...await batteryInfo(),
         'type': 'hello',
         'can_send': capable,
-        'version': '2.0.0',
+        'version': version,
+        'model': model,
       }));
-      await updateNotif('Connecting as "$name"…');
 
       // Heartbeat: lets the server know we are alive and detects dead sockets.
       // Balance: shortly after connecting if due, then re-checked every few minutes.
@@ -248,13 +270,19 @@ Future<void> onServiceStart(ServiceInstance service) async {
                   data['message'] as String,
                 );
               case 'registered':
-                await updateNotif(data['approved'] == true
-                    ? 'Connected as "$name" ✓'
-                    : 'Waiting for an admin to approve "$name"…');
+                await prefs.setString(kPrefDeviceName, data['name'] as String? ?? name());
+                await prefs.setBool(kPrefEnabled, data['enabled'] == true);
+                await publishState(online: true);
+              case 'enabled':
+                await prefs.setBool(kPrefEnabled, data['enabled'] == true);
+                await publishState(online: true);
+              case 'renamed':
+                await prefs.setString(kPrefDeviceName, data['name'] as String? ?? name());
+                await publishState(online: true);
+              case 'signed_out':
+                await signedOut(data['message'] as String? ?? 'Signed out.');
               case 'check_balance':
                 checkBalanceIfDue(force: true);
-              case 'approved':
-                await updateNotif('Approved ✓ Connected as "$name"');
               case 'error':
                 await updateNotif(data['message'] as String? ?? 'Server error');
             }
@@ -263,38 +291,38 @@ Future<void> onServiceStart(ServiceInstance service) async {
         onDone: () async {
           if (gen != generation) return;
           final code = ch.closeCode;
-          if (code == 4009) {
-            running = false;
-            await updateNotif(
-                'Name "$name" is already used by another phone. Change it in settings.');
+          if (code == 4001) {
+            if (running) await signedOut('Signed out. Sign in again.');
             return;
           }
           if (code == 4003) {
             running = false;
-            await updateNotif('Rejected by the server. Check the phone name and server.');
+            await updateNotif('Rejected by the server. Update the app.');
             return;
           }
-          if (code == 4010) {
-            running = false;
-            await updateNotif('Too many phones are waiting for approval. Ask an admin.');
-            return;
-          }
+          service.invoke('state', {'name': name(), 'enabled': enabled(), 'online': false});
           await updateNotif('Disconnected. Reconnecting…');
           scheduleReconnect(gen);
         },
         onError: (_) async {
           if (gen != generation) return;
+          service.invoke('state', {'name': name(), 'enabled': enabled(), 'online': false});
           await updateNotif('Error. Reconnecting…');
           scheduleReconnect(gen);
         },
       );
     } catch (e) {
       if (gen != generation) return;
+      service.invoke('state', {'name': name(), 'enabled': enabled(), 'online': false});
       await updateNotif('Connection failed. Retrying…');
       scheduleReconnect(gen);
     }
   }
 
+  try {
+    version = (await PackageInfo.fromPlatform()).version;
+  } catch (_) {}
+  model = await Account.phoneModel();
   connectRef = connect;
 
   // Listen for commands from UI
@@ -372,6 +400,12 @@ class GatewayService {
   /// Stream of status messages from the service.
   static Stream<Map<String, dynamic>?> get statusStream =>
       _service.on('status');
+
+  /// {name, enabled, online} whenever the server tells the phone something.
+  static Stream<Map<String, dynamic>?> get stateStream => _service.on('state');
+
+  /// The server signed this phone out (or the token stopped working).
+  static Stream<Map<String, dynamic>?> get signedOutStream => _service.on('signed_out');
 
   /// Stream of SMS log entries from the service.
   static Stream<Map<String, dynamic>?> get smsSentStream =>
