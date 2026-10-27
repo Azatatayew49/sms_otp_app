@@ -15,7 +15,7 @@ import 'account.dart';
 
 const kPrefUrl = 'gateway_url';
 // A fresh install talks to the production server without any setup.
-const kDefaultUrl = 'http://45.39.230.200';
+const kDefaultUrl = 'http://test.tmapps.biz';
 const kPrefDeviceId = 'gateway_device_id';
 // From signing in (see account.dart); valid until this phone signs out.
 const kPrefAuthToken = 'gateway_auth_token';
