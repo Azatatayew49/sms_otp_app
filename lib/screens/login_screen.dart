@@ -70,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 const Icon(Icons.sms_outlined, size: 56, color: Brand.amber),
                 const SizedBox(height: 12),
-                const Text('SMS OTP Gateway',
+                const Text('Ak Ulag SMS Gateway',
                     textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
                 const Text('Sign in with the login an admin gave you.',

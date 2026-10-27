@@ -122,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SMS OTP Gateway'),
+        title: const Text('Ak Ulag SMS Gateway'),
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
         actions: [

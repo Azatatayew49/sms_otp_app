@@ -22,7 +22,7 @@ class SmsOtpApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SMS OTP Gateway',
+      title: 'Ak Ulag SMS Gateway',
       debugShowCheckedModeBanner: false,
       theme: buildBrandTheme(),
       initialRoute: signedIn ? '/' : '/login',
