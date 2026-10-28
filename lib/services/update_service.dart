@@ -10,16 +10,26 @@ import 'package:path_provider/path_provider.dart';
 // This file is identical in every Ak Ulag Flutter app; only the arguments differ.
 
 class UpdateInfo {
-  const UpdateInfo({required this.versionCode, required this.versionName, required this.url});
+  const UpdateInfo({
+    required this.versionCode,
+    required this.versionName,
+    required this.url,
+    this.popup = 'daily',
+  });
 
   final int versionCode;
   final String versionName;
   final String url;
 
+  /// How often admins want the "update available" pop-up: every_launch, daily,
+  /// weekly or never (staff app → App settings).
+  final String popup;
+
   factory UpdateInfo.fromJson(Map<String, dynamic> json, String apiBase) => UpdateInfo(
         versionCode: json['versionCode'] as int,
         versionName: json['versionName'] as String,
         url: _normalizeUrl(json['url'] as String, apiBase),
+        popup: json['popup'] as String? ?? 'daily',
       );
 }
 

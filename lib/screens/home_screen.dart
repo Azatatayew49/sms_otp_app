@@ -4,6 +4,8 @@ import 'package:another_telephony/telephony.dart';
 import '../core/brand.dart';
 import '../services/gateway_service.dart';
 import 'login_screen.dart';
+import '../services/account.dart';
+import '../widgets/update_popup.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,6 +32,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _listenService();
     _syncRunning();
     _loadSaved();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final url = await Account.serverUrl();
+      if (mounted) maybeShowUpdatePopup(context, apiBase: '$url/api', app: 'gateway');
+    });
   }
 
   Future<void> _loadSaved() async {
