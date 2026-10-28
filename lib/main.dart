@@ -8,6 +8,7 @@ import 'services/gateway_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Account.migrateServerUrl();
   await GatewayService.initialize();
   final signedIn = await Account.signedIn();
   // Nothing to run until someone signs in.

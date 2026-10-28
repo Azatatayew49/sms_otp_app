@@ -23,6 +23,14 @@ class Account {
 
   static Future<String> serverUrl() async => (await _prefs()).getString(kPrefUrl) ?? kDefaultUrl;
 
+  /// Phones set up before the domain existed saved the server's IP; move them to the
+  /// domain (the app no longer shows or asks for a server address).
+  static Future<void> migrateServerUrl() async {
+    final prefs = await _prefs();
+    final saved = prefs.getString(kPrefUrl);
+    if (saved != null && saved.contains('45.39.230.200')) await prefs.setString(kPrefUrl, kDefaultUrl);
+  }
+
   /// This install's stable id (the server knows the phone by it).
   static Future<String> deviceId(SharedPreferences prefs) async {
     var id = prefs.getString(kPrefDeviceId) ?? '';

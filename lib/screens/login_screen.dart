@@ -16,10 +16,8 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _login = TextEditingController();
   final _password = TextEditingController();
-  final _url = TextEditingController(text: kDefaultUrl);
   bool _busy = false;
   bool _hide = true;
-  bool _showServer = false;
   String? _error;
 
   @override
@@ -27,14 +25,12 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     _error = widget.message;
     Account.login().then((l) => _login.text = l);
-    Account.serverUrl().then((u) => _url.text = u);
   }
 
   @override
   void dispose() {
     _login.dispose();
     _password.dispose();
-    _url.dispose();
     super.dispose();
   }
 
@@ -48,7 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await Account.signIn(_url.text, _login.text, _password.text);
+      await Account.signIn(await Account.serverUrl(), _login.text, _password.text);
       await GatewayService.start();
       if (mounted) Navigator.of(context).pushReplacementNamed('/');
     } catch (e) {
@@ -96,14 +92,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   onSubmitted: (_) => _signIn(),
                 ),
-                if (_showServer) ...[
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _url,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(labelText: 'Server', prefixIcon: Icon(Icons.dns_outlined)),
-                  ),
-                ],
                 if (_error != null) ...[
                   const SizedBox(height: 14),
                   Text(_error!, style: const TextStyle(color: Brand.error)),
@@ -117,11 +105,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       : const Text('Sign in'),
                 ),
                 const SizedBox(height: 8),
-                if (!_showServer)
-                  TextButton(
-                    onPressed: () => setState(() => _showServer = true),
-                    child: const Text('Change server'),
-                  ),
               ]),
             ),
           ),

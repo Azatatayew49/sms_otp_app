@@ -72,7 +72,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           row(Icons.person_outline, 'Signed in as', _login),
           row(Icons.smartphone, 'Phone name (set by an admin)', _name),
-          row(Icons.dns_outlined, 'Server', _url),
           const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: _signOut,
