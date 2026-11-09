@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -15,6 +16,8 @@ class UpdateInfo {
     required this.versionName,
     required this.url,
     this.popup = 'daily',
+    this.size,
+    this.sha256,
   });
 
   final int versionCode;
@@ -25,11 +28,18 @@ class UpdateInfo {
   /// weekly or never (staff app → App settings).
   final String popup;
 
+  /// The APK's size and SHA-256, to check the download before installing it
+  /// (null from servers that don't send them).
+  final int? size;
+  final String? sha256;
+
   factory UpdateInfo.fromJson(Map<String, dynamic> json, String apiBase) => UpdateInfo(
         versionCode: json['versionCode'] as int,
         versionName: json['versionName'] as String,
         url: _normalizeUrl(json['url'] as String, apiBase),
         popup: json['popup'] as String? ?? 'daily',
+        size: (json['size'] as num?)?.toInt(),
+        sha256: json['sha256'] as String?,
       );
 }
 
@@ -103,6 +113,13 @@ Future<void> downloadAndInstall(
   for (var attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await _downloadResuming(update.url, file, onProgress: onProgress, cancelToken: cancelToken);
+      if (!await _isIntact(file, update)) {
+        // A damaged or mixed-up file ("package appears to be invalid"): never
+        // resume onto it or open it again — start this download from zero.
+        await file.delete();
+        if (attempt == maxAttempts) throw Exception('The download was damaged. Try again.');
+        continue;
+      }
       final result = await OpenFile.open(file.path, type: _apkMimeType);
       if (result.type != ResultType.done) throw Exception(result.message);
       return;
@@ -114,6 +131,18 @@ Future<void> downloadAndInstall(
       await Future.delayed(Duration(seconds: attempt * 2));
     }
   }
+}
+
+/// Whether the downloaded file is exactly the published APK (when the server says
+/// what that is).
+Future<bool> _isIntact(File file, UpdateInfo update) async {
+  if (!await file.exists()) return false;
+  if (update.size != null && await file.length() != update.size) return false;
+  if (update.sha256 != null) {
+    final digest = await sha256.bind(file.openRead()).first;
+    return digest.toString() == update.sha256!.toLowerCase();
+  }
+  return true;
 }
 
 /// Old half-finished or already-installed downloads would otherwise pile up.
